@@ -1,0 +1,77 @@
+name: Release
+
+# Triggered by pushing a tag like `v1.2.0` (see RELEASING.md).
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run tests before releasing
+        run: |
+          cd OrganizerCore
+          swift test
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (Release configuration)
+        run: |
+          xcodebuild \
+            -project MacOrganizer.xcodeproj \
+            -scheme MacOrganizer \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            clean build
+
+      - name: Package .app as a zip
+        run: |
+          APP_PATH="build/Build/Products/Release/MacOrganizer.app"
+          ZIP_NAME="MacOrganizer-${{ steps.version.outputs.version }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MacOrganizer ${{ steps.version.outputs.version }}
+          files: ${{ env.zip_name }}
+          generate_release_notes: true
+          body: |
+            **Unsigned, ad-hoc build** — this isn't notarized (no Apple Developer
+            account wired into CI). Gatekeeper will block the first launch:
+
+            1. Unzip.
+            2. Right-click `MacOrganizer.app` → **Open** → confirm.
+               (Or from Terminal: `xattr -cr MacOrganizer.app`.)
+
+            See [MIGRATION.md](https://github.com/${{ github.repository }}/blob/main/MIGRATION.md)
+            for what changed vs. the original Python prototype, and
+            [ARCHITECTURE.md](https://github.com/${{ github.repository }}/blob/main/ARCHITECTURE.md)
+            for how the app is put together.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

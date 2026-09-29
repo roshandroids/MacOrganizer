@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Cache SwiftPM / DerivedData
+        uses: actions/cache@v4
+        with:
+          path: |
+            OrganizerCore/.build
+            ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-spm-${{ hashFiles('OrganizerCore/Package.resolved', 'project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: OrganizerCore engine tests (SwiftPM)
+        run: |
+          cd OrganizerCore
+          swift test
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: App + core tests (xcodebuild)
+        run: |
+          xcodebuild \
+            -project MacOrganizer.xcodeproj \
+            -scheme MacOrganizer \
+            -destination 'platform=macOS' \
+            test
